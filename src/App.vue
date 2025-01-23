@@ -5,6 +5,7 @@
     <table class="table">
       <thead>
         <tr>
+          <th>Номер</th>
           <th>Деталь</th>
           <th>Цена</th>
           <th>Количество</th>
@@ -13,50 +14,16 @@
         </tr>
       </thead>
       <tbody>
-        <template v-for="part in parts" :key="part.id">
-          <tr>
-            <td>{{ part.name }}</td>
-            <td>{{ part.price }}</td>
-            <td>
-              <input type="number" v-model="part.quantity" min="0" @input="recalculatePrices" />
-            </td>
-            <td>{{ part.cost }}</td>
-            <td>
-              <button class="btn btn-danger" @click="deletePart(part.id)">Удалить</button>
-              <button class="btn btn-success" @click="showAddPartDialog(part.id)">Добавить</button>
-            </td>
-          </tr>
-          <template v-if="part.children">
-            <template v-for="child in part.children" :key="child.id">
-              <tr class="child-row">
-                <td>— {{ child.name }}</td>
-                <td>{{ child.price }}</td>
-                <td>
-                  <input type="number" v-model="child.quantity" min="0" @input="recalculatePrices" />
-                </td>
-                <td>{{ child.cost }}</td>
-                <td>
-                  <button class="btn btn-danger" @click="deletePart(child.id)">Удалить</button>
-                  <button class="btn btn-success" @click="showAddPartDialog(child.id)">Добавить</button>
-                </td>
-              </tr>
-              <template v-if="child.children">
-                <tr v-for="subChild in child.children" :key="subChild.id" class="sub-child-row">
-                  <td>— — {{ subChild.name }}</td>
-                  <td>{{ subChild.price }}</td>
-                  <td>
-                    <input type="number" v-model="subChild.quantity" min="0" @input="recalculatePrices" />
-                  </td>
-                  <td>{{ subChild.cost }}</td>
-                  <td>
-                    <button class="btn btn-danger" @click="deletePart(subChild.id)">Удалить</button>
-                    <button class="btn btn-success" @click="showAddPartDialog(subChild.id)">Добавить</button>
-                  </td>
-                </tr>
-              </template>
-            </template>
-          </template>
-        </template>
+        <PartRow
+          v-for="(part, index) in getPartsWithIndexes(parts)"
+          :key="part.id"
+          :part="part"
+          :index="part.index"
+          :paddingLeft="0"
+          @delete="deletePart"
+          @add="showAddPartDialog"
+          @updatePrice="updatePartPrice"
+        />
       </tbody>
     </table>
 
@@ -76,10 +43,14 @@
 
 <script lang="ts">
 import { defineComponent, reactive, ref } from 'vue';
-import * as XLSX from 'xlsx'; // импортируем библиотеку для работы с Excel
+import PartRow from './components/PartRow.vue'; // импортируем рекурсивный компонент
+import * as XLSX from 'xlsx';
 
 export default defineComponent({
   name: 'App',
+  components: {
+    PartRow
+  },
   setup() {
     const parts = reactive([
       {
@@ -123,6 +94,7 @@ export default defineComponent({
         part.cost = part.price * (part.quantity || 1);
         return part.price;
       };
+
       parts.forEach(calculateCost);
     };
 
@@ -151,7 +123,7 @@ export default defineComponent({
 
     const addPart = () => {
       if (!newPart.name || newPart.price <= 0) return;
-      
+
       const findAndAdd = (partsList: any[]) => {
         for (let part of partsList) {
           if (part.id === newPart.parentId) {
@@ -161,7 +133,7 @@ export default defineComponent({
               name: newPart.name,
               price: newPart.price,
               quantity: 1,
-              children: reactive([])
+              children: reactive([]) // пустой массив для возможных дочерей
             });
             return true;
           }
@@ -175,13 +147,31 @@ export default defineComponent({
       closeDialog();
     };
 
+    const getPartsWithIndexes = (parts: any[], index: string = '') => {
+      let result: any[] = [];
+
+      const processPart = (part: any, parentName: string | null = null, index: string = '') => {
+        part.index = index; // добавляем индекс в объект детали
+        result.push(part);
+
+        if (part.children) {
+          part.children.forEach((child: any, i: number) => {
+            processPart(child, part.name, `${index}.${i + 1}`);
+          });
+        }
+      };
+
+      parts.forEach((part, i) => processPart(part, null, `${i + 1}`));
+      return result;
+    };
+
     const exportToExcel = () => {
       const formatData = (parts: any[]) => {
         let result: any[] = [];
-        
-        const processPart = (part: any, parentName: string | null = null) => {
+        const processPart = (part: any, parentName: string | null = null, index: string = '') => {
           const partData = {
-            Название: part.name,
+            Номер: index, // Добавляем номер отдельно
+            Название: part.name, // Название в отдельном столбце
             Цена: part.price,
             Количество: part.quantity,
             Стоимость: part.cost,
@@ -190,28 +180,31 @@ export default defineComponent({
           result.push(partData);
 
           if (part.children) {
-            part.children.forEach((child: any) => {
-              processPart(child, part.name);
+            part.children.forEach((child: any, i: number) => {
+              processPart(child, part.name, `${index}.${i + 1}`);
             });
           }
         };
 
-        parts.forEach(part => processPart(part));
+        parts.forEach((part, i) => processPart(part, null, `${i + 1}`));
         return result;
       };
 
       const data = formatData(parts);
-      const ws = XLSX.utils.json_to_sheet(data); // преобразуем данные в формат листа Excel
-      const wb = XLSX.utils.book_new(); // создаем новую книгу
-      XLSX.utils.book_append_sheet(wb, ws, 'Таблица деталей'); // добавляем лист в книгу
-
-      // сохраняем файл
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Таблица деталей');
       XLSX.writeFile(wb, 'car_parts.xlsx');
+    };
+
+    const updatePartPrice = (part: any, newPrice: number) => {
+      part.price = newPrice;  // Обновляем цену детальки
+      recalculatePrices();  // Пересчитываем цены для всех родительских деталей
     };
 
     recalculatePrices();
 
-    return { parts, recalculatePrices, deletePart, showAddPartDialog, addPart, closeDialog, showDialog, newPart, exportToExcel };
+    return { parts, recalculatePrices, deletePart, showAddPartDialog, addPart, closeDialog, showDialog, newPart, exportToExcel, getPartsWithIndexes, updatePartPrice };
   }
 });
 </script>
