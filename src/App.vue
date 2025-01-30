@@ -56,17 +56,19 @@ export default defineComponent({
       {
         id: 1,
         name: 'Кузов',
+        cost: 0,
         price: 0,
         quantity: 1,
         children: reactive([
           {
             id: 2,
             name: 'Двери',
+            cost: 0,
             price: 0,
             quantity: 3,
             children: reactive([
-              { id: 3, name: 'Замок', price: 5000, quantity: 4, children: reactive([]) },
-              { id: 4, name: 'Ручки', price: 6000, quantity: 6, children: reactive([]) }
+              { id: 3, name: 'Замок', cost: 0, price: 5000, quantity: 4, children: reactive([]) },
+              { id: 4, name: 'Ручки', cost: 0, price: 6000, quantity: 6, children: reactive([]) }
             ])
           }
         ])
@@ -74,29 +76,33 @@ export default defineComponent({
       {
         id: 5,
         name: 'Двигатель',
+        cost: 0,
         price: 0,
         quantity: 1,
         children: reactive([
-          { id: 6, name: 'Поршни', price: 10000, quantity: 5, children: reactive([]) },
-          { id: 7, name: 'Кольца', price: 2000, quantity: 3, children: reactive([]) }
+          { id: 6, name: 'Поршни', cost: 0, price: 10000, quantity: 5, children: reactive([]) },
+          { id: 7, name: 'Кольца', cost: 0, price: 2000, quantity: 3, children: reactive([]) }
         ])
       }
     ]);
 
     const showDialog = ref(false);
     const newPart = reactive({ name: '', price: 0, parentId: null });
-
+    
     const recalculatePrices = () => {
       const calculateCost = (part: any) => {
-        if (part.children && part.children.length > 0) {
-          part.price = part.children.reduce((sum: number, child: any) => sum + calculateCost(child), 0);
-        }
-        part.cost = part.price * (part.quantity || 1);
-        return part.price;
-      };
-
-      parts.forEach(calculateCost);
-    };
+    // Если у части есть дети, мы сначала считаем их стоимость
+    if (part.children && part.children.length > 0) {
+      part.price = part.children.reduce((sum: number, child: any) => sum + calculateCost(child), 0);
+    }
+    // Вычисляем общую стоимость
+    console.log(part)
+    part.cost = part.price * (part.quantity || 1);
+    return part.cost;
+  };
+  // Для начала пересчитываем все части начиная с самой верхней
+  parts.forEach(calculateCost);
+};
 
     const deletePart = (id: number) => {
       const removePart = (partsList: any[]) => {
@@ -121,6 +127,13 @@ export default defineComponent({
       showDialog.value = false;
     };
 
+    const resetNewPart = () => {
+      newPart.name = '';
+      newPart.price = 0;
+      newPart.parentId = null;
+      showDialog.value = false; 
+    };
+
     const addPart = () => {
       if (!newPart.name || newPart.price <= 0) return;
 
@@ -128,13 +141,16 @@ export default defineComponent({
         for (let part of partsList) {
           if (part.id === newPart.parentId) {
             if (!part.children) part.children = reactive([]);
-            part.children.push({
+
+            const newChild = {
               id: Date.now(),
               name: newPart.name,
               price: newPart.price,
               quantity: 1,
-              children: reactive([]) // пустой массив для возможных дочерей
-            });
+              children: reactive([]),
+            };
+
+            part.children.push(newChild);
             return true;
           }
           if (part.children && findAndAdd(part.children)) return true;
@@ -142,9 +158,10 @@ export default defineComponent({
         return false;
       };
 
-      findAndAdd(parts);
-      recalculatePrices();
-      closeDialog();
+      if (findAndAdd(parts)) {
+        recalculatePrices();
+        resetNewPart(); 
+      }
     };
 
     const getPartsWithIndexes = (parts: any[], index: string = '') => {
@@ -166,36 +183,42 @@ export default defineComponent({
     };
 
     const exportToExcel = () => {
-      const formatData = (parts: any[]) => {
-        let result: any[] = [];
-        const processPart = (part: any, parentName: string | null = null, index: string = '') => {
-          const partData = {
-            Номер: index, // Добавляем номер отдельно
-            Название: part.name, // Название в отдельном столбце
-            Цена: part.price,
-            Количество: part.quantity,
-            Стоимость: part.cost,
-            Родитель: parentName || '',
-          };
-          result.push(partData);
+  // Пересчитываем все стоимости перед экспортом
+  recalculatePrices();
 
-          if (part.children) {
-            part.children.forEach((child: any, i: number) => {
-              processPart(child, part.name, `${index}.${i + 1}`);
-            });
-          }
-        };
-
-        parts.forEach((part, i) => processPart(part, null, `${i + 1}`));
-        return result;
+  // Форматируем данные для экспорта
+  const formatData = (parts: any[]) => {
+    let result: any[] = [];
+    const processPart = (part: any, parentName: string | null = null, index: string = '') => {
+      const partData = {
+        Номер: index, //номер отдельно
+        Название: part.name, //в отдельном столбце
+        Цена: part.price,
+        Количество: part.quantity,
+        Стоимость: part.cost,
+        Родитель: parentName || '',
       };
+      result.push(partData);
 
-      const data = formatData(parts);
-      const ws = XLSX.utils.json_to_sheet(data);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Таблица деталей');
-      XLSX.writeFile(wb, 'car_parts.xlsx');
+      if (part.children) {
+        part.children.forEach((child: any, i: number) => {
+          processPart(child, part.name, `${index}.${i + 1}`);
+        });
+      }
     };
+
+    parts.forEach((part, i) => processPart(part, null, `${i + 1}`));
+    return result;
+  };
+
+  // Получаем актуальные данные для экспорта после пересчета
+  const data = formatData(parts);
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Таблица деталей');
+  XLSX.writeFile(wb, 'car_parts.xlsx');
+};
+
 
     const updatePartPrice = (part: any, newPrice: number) => {
       part.price = newPrice;  // Обновляем цену детальки
